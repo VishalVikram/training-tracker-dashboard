@@ -191,6 +191,23 @@
   @media (max-width: 980px) {
     .charts-row, .alert-row { grid-template-columns: 1fr; }
   }
+  .upload-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; background: var(--accent-light); border: 1px solid var(--accent); border-radius: 10px; padding: 12px 16px; margin-bottom: 16px; flex-wrap: wrap; }
+  .upload-banner span { font-size: 13px; color: var(--ink); }
+  a.btn { text-decoration: none; }
+  .switch { position: relative; display: inline-block; width: 38px; height: 22px; flex-shrink: 0; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch .slider { position: absolute; cursor: pointer; inset: 0; background-color: var(--gray-bg); transition: .15s; border-radius: 22px; }
+  .switch .slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background-color: white; transition: .15s; border-radius: 50%; box-shadow: 0 1px 2px rgba(0,0,0,0.2); }
+  .switch input:checked + .slider { background-color: var(--green); }
+  .switch input:checked + .slider:before { transform: translateX(16px); }
+  .emp-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .emp-row:last-child { border-bottom: none; }
+  .emp-name { font-weight: 650; font-size: 13.5px; }
+  .emp-mgr { font-size: 11.5px; color: var(--muted); }
+  .emp-stats { font-size: 12px; color: var(--muted); display: flex; gap: 14px; }
+  .emp-actions { display: flex; align-items: center; gap: 14px; }
+  .emp-section-title { font-size: 12.5px; font-weight: 650; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; margin: 18px 0 8px; }
+  .emp-section-title:first-child { margin-top: 0; }
 </style>
 </head>
 <body>
@@ -213,10 +230,15 @@
     <button data-tab="people">By person</button>
     <button data-tab="log">Training log</button>
     <button data-tab="mdm">Certifications (MDM)</button>
+    <button data-tab="employees">Employees</button>
     <button data-tab="monthly">Monthly activity</button>
   </nav>
 
   <div class="panel active" id="panel-overview">
+    <div class="upload-banner">
+      <span>Have a certificate to add to your record? Upload the file to the shared team folder.</span>
+      <a class="btn btn-primary" href="https://drive.google.com/drive/folders/1uj-nR7pUU0o5NwnDOnNhAh3Z7925qvJd?usp=share_link" target="_blank" rel="noopener noreferrer">Upload certificate &#8599;</a>
+    </div>
     <div class="charts-row">
       <div class="card chart-card">
         <h3>Certifications completed by month</h3>
@@ -272,6 +294,11 @@
           <option value="">Certificate: any</option>
           <option value="Yes">Certificate: Yes</option>
           <option value="No">Certificate: No</option>
+        </select>
+        <select id="log-emp-status">
+          <option value="active" selected>Active employees</option>
+          <option value="left">Left employees</option>
+          <option value="all">All employees</option>
         </select>
         <button class="btn" id="log-export">Export CSV</button>
       </div>
@@ -331,6 +358,11 @@
         <select id="mdm-status">
           <option value="">Status: any</option>
         </select>
+        <select id="mdm-emp-status">
+          <option value="active" selected>Active employees</option>
+          <option value="left">Left employees</option>
+          <option value="all">All employees</option>
+        </select>
         <button class="btn" id="mdm-export">Export CSV</button>
       </div>
       <div class="count-pill" id="mdm-count"></div>
@@ -346,6 +378,27 @@
           <tbody id="mdm-body"></tbody>
         </table>
       </div>
+    </div>
+  </div>
+
+  <div class="panel" id="panel-employees">
+    <div class="card">
+      <div class="section-sub-row">
+        <span class="section-sub">Employee roster &mdash; toggle off anyone who has left; their history stays on record</span>
+        <button class="btn btn-primary" id="toggle-emp-form">+ Add employee</button>
+      </div>
+      <div class="add-form" id="emp-form">
+        <div class="add-grid">
+          <div><label>Name*</label><input type="text" id="new-emp-name" placeholder="Full name"></div>
+          <div><label>Manager</label><input type="text" id="new-emp-manager" placeholder="Reporting manager (optional)"></div>
+        </div>
+        <div class="add-actions">
+          <button class="btn" id="emp-cancel">Cancel</button>
+          <button class="btn btn-primary" id="emp-save">Add employee</button>
+        </div>
+      </div>
+      <input type="text" id="emp-search" placeholder="Search employees..." style="width:100%;margin-bottom:10px;">
+      <div id="emp-list"></div>
     </div>
   </div>
 
@@ -370,8 +423,8 @@ document.getElementById('gen-date').textContent = new Date().toLocaleDateString(
 // ---------- Persisted edits / additions (localStorage) ----------
 const STORE_KEY = 'ttracker_overrides_v2';
 function loadOverrides() {
-  try { return Object.assign({main:{}, mdm:{}, addedMain:{}, addedMdm:{}}, JSON.parse(localStorage.getItem(STORE_KEY))||{}); }
-  catch(e) { return {main:{}, mdm:{}, addedMain:{}, addedMdm:{}}; }
+  try { return Object.assign({main:{}, mdm:{}, addedMain:{}, addedMdm:{}, empStatus:{}, addedEmployees:{}}, JSON.parse(localStorage.getItem(STORE_KEY))||{}); }
+  catch(e) { return {main:{}, mdm:{}, addedMain:{}, addedMdm:{}, empStatus:{}, addedEmployees:{}}; }
 }
 let OVR = loadOverrides();
 function persist() { localStorage.setItem(STORE_KEY, JSON.stringify(OVR)); }
@@ -439,6 +492,44 @@ function removeMainRecord(key) {
   if (OVR.addedMain) delete OVR.addedMain[key];
   persist();
 }
+
+// ---------- Employee roster (active / left) ----------
+let ADDED_EMPLOYEES = [];
+Object.entries(OVR.addedEmployees||{}).forEach(([id,fields]) => {
+  ADDED_EMPLOYEES.push(Object.assign({}, fields, { __key: id }));
+});
+function allEmployeeNames() {
+  return uniqueSorted(MAIN.map(r=>r.name).concat(MDM.map(r=>r.name)).concat(ADDED_EMPLOYEES.map(e=>e.name)));
+}
+function employeeManager(name) {
+  const mrow = MAIN.find(r => r.name === name && r.manager);
+  if (mrow) return mrow.manager;
+  const arow = ADDED_EMPLOYEES.find(e => e.name === name && e.manager);
+  if (arow) return arow.manager;
+  return null;
+}
+function isActiveEmployee(name) {
+  return (OVR.empStatus||{})[name] !== 'left';
+}
+function setEmployeeActive(name, active) {
+  OVR.empStatus = OVR.empStatus || {};
+  if (active) delete OVR.empStatus[name]; else OVR.empStatus[name] = 'left';
+  persist();
+}
+function addEmployee(name, manager) {
+  name = (name||'').trim();
+  if (!name) return null;
+  const existing = allEmployeeNames().find(n => n.toLowerCase() === name.toLowerCase());
+  if (existing) { setEmployeeActive(existing, true); return existing; }
+  const id = 'e' + Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+  OVR.addedEmployees = OVR.addedEmployees || {};
+  OVR.addedEmployees[id] = { name, manager: manager || null };
+  persist();
+  ADDED_EMPLOYEES.push({ name, manager: manager || null, __key: id });
+  return name;
+}
+function activeMainRows() { return MAIN.filter(r => isActiveEmployee(r.name)); }
+function activeMdmRows() { return MDM.filter(r => isActiveEmployee(r.name)); }
 
 // ---------- Tabs ----------
 document.querySelectorAll('nav.tabs button').forEach(btn => {
@@ -548,7 +639,7 @@ function employeeStatus(name) {
 }
 function monthlyCounts() {
   const counts = {};
-  MAIN.forEach(r => {
+  activeMainRows().forEach(r => {
     const d = parseDate(r.completionDate);
     if (!d) return;
     const key = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
@@ -557,12 +648,12 @@ function monthlyCounts() {
   return counts;
 }
 function expiringRecords() {
-  return MAIN.filter(r => { const d = parseDate(r.certExpiry); if (!d) return false; const days=(d-TODAY)/86400000; return days>=0 && days<=90; })
+  return activeMainRows().filter(r => { const d = parseDate(r.certExpiry); if (!d) return false; const days=(d-TODAY)/86400000; return days>=0 && days<=90; })
     .map(r => Object.assign({}, r, { days: Math.round((parseDate(r.certExpiry)-TODAY)/86400000) }))
     .sort((a,b)=>a.days-b.days);
 }
 function expiredRecords() {
-  return MAIN.filter(r => { const d = parseDate(r.certExpiry); return d && d < TODAY; })
+  return activeMainRows().filter(r => { const d = parseDate(r.certExpiry); return d && d < TODAY; })
     .map(r => Object.assign({}, r, { days: Math.round((TODAY-parseDate(r.certExpiry))/86400000) }))
     .sort((a,b)=>b.days-a.days);
 }
@@ -602,7 +693,7 @@ function renderCharts() {
   });
   const statusOrder = ['uptodate','expiring','expired','planned','none'];
   const statusColors = {uptodate:'#1e9e6a', expiring:'#b8860b', expired:'#c4453b', planned:'#2b6cb0', none:'#9aa0ab'};
-  const names = uniqueSorted(MAIN.map(r=>r.name));
+  const names = allEmployeeNames().filter(isActiveEmployee);
   const statusCounts = statusOrder.map(s => names.filter(n => employeeStatus(n) === s).length);
   if (statusChart) statusChart.destroy();
   statusChart = new Chart(document.getElementById('statusChart'), {
@@ -615,20 +706,22 @@ function renderCharts() {
 // ---------- Overview ----------
 let activeType = null;
 function renderOverview() {
-  const people = uniqueSorted(MAIN.map(r => r.name));
-  const totalTrainings = MAIN.length;
-  const certifiedCount = MAIN.filter(r => (r.certificate||'').toLowerCase() === 'yes').length;
-  const expiringSoon = MAIN.filter(r => {
+  const people = allEmployeeNames().filter(isActiveEmployee);
+  const activeRows = activeMainRows();
+  const activeMdm = activeMdmRows();
+  const totalTrainings = activeRows.length;
+  const certifiedCount = activeRows.filter(r => (r.certificate||'').toLowerCase() === 'yes').length;
+  const expiringSoon = activeRows.filter(r => {
     const d = parseDate(r.certExpiry);
     if (!d) return false;
     const days = (d - TODAY) / 86400000;
     return days >= 0 && days <= 90;
   }).length;
-  const expired = MAIN.filter(r => {
+  const expired = activeRows.filter(r => {
     const d = parseDate(r.certExpiry);
     return d && d < TODAY;
   }).length;
-  const mdmDone = MDM.filter(r => (r.status||'').toLowerCase() === 'done').length;
+  const mdmDone = activeMdm.filter(r => (r.status||'').toLowerCase() === 'done').length;
 
   const kpis = [
     { num: people.length, lbl: 'People tracked' },
@@ -636,16 +729,16 @@ function renderOverview() {
     { num: certifiedCount, lbl: 'Certificates earned', cls: 'good' },
     { num: expiringSoon, lbl: 'Expiring within 90 days', cls: expiringSoon ? 'warn' : '' },
     { num: expired, lbl: 'Expired certificates', cls: expired ? 'bad' : '' },
-    { num: mdmDone + '/' + MDM.length, lbl: 'MDM certs done' },
+    { num: mdmDone + '/' + activeMdm.length, lbl: 'MDM certs done' },
   ];
   document.getElementById('kpis').innerHTML = kpis.map(k =>
     `<div class="kpi ${k.cls||''}"><div class="num">${k.num}</div><div class="lbl">${k.lbl}</div></div>`
   ).join('');
   document.getElementById('subtitle').textContent =
-    `${people.length} people · ${totalTrainings} training records · ${MDM.length} MDM certifications · ${MONTHLY.length} monthly log entries`;
+    `${people.length} active people · ${totalTrainings} training records · ${activeMdm.length} MDM certifications · ${MONTHLY.length} monthly log entries`;
 
   const typeCounts = {};
-  MAIN.forEach(r => { const t = r.type || 'Unspecified'; typeCounts[t] = (typeCounts[t]||0)+1; });
+  activeRows.forEach(r => { const t = r.type || 'Unspecified'; typeCounts[t] = (typeCounts[t]||0)+1; });
   const maxType = Math.max(...Object.values(typeCounts));
   document.getElementById('type-bars').innerHTML = Object.entries(typeCounts).sort((a,b)=>b[1]-a[1]).map(([t,c]) =>
     `<div class="bar-row ${t===activeType?'active':''}" data-type="${esc(t)}"><span>${esc(t)}</span><div class="bar-track"><div class="bar-fill" style="width:${(c/maxType*100).toFixed(0)}%"></div></div><span>${c}</span></div>`
@@ -662,7 +755,8 @@ function renderOverview() {
   renderAlertList('expiredList', expiredRecords(), 'expired');
 
   const byPerson = {};
-  MAIN.forEach(r => {
+  people.forEach(name => { byPerson[name] = { manager: employeeManager(name), trainings: 0, certs: 0, ratings: [], latest: null }; });
+  activeRows.forEach(r => {
     if (!r.name) return;
     if (!byPerson[r.name]) byPerson[r.name] = { manager: r.manager, trainings: 0, certs: 0, ratings: [], latest: null };
     const p = byPerson[r.name];
@@ -699,7 +793,7 @@ function renderOverview() {
 function renderTypeDetail() {
   const el = document.getElementById('type-detail');
   if (!activeType) { el.innerHTML = ''; return; }
-  let records = MAIN.filter(r => (r.type || 'Unspecified') === activeType);
+  let records = activeMainRows().filter(r => (r.type || 'Unspecified') === activeType);
   records = records.slice().sort((a,b) => {
     const da = parseDate(a.completionDate), db = parseDate(b.completionDate);
     if (da && db) return db - da;
@@ -724,12 +818,13 @@ function renderTypeDetail() {
 // ---------- People tab ----------
 let selectedPerson = null;
 let addFormOpen = false;
+let personTypeFilter = '';
 function renderPeopleList(filter) {
-  const names = uniqueSorted(MAIN.map(r=>r.name));
+  const names = allEmployeeNames();
   const q = (filter||'').trim().toLowerCase();
   const shown = q ? names.filter(n => n.toLowerCase().includes(q)) : names;
   document.getElementById('people-list').innerHTML = shown.map(n =>
-    `<button data-name="${esc(n)}" class="${n===selectedPerson?'active':''}">${esc(n)}</button>`
+    `<button data-name="${esc(n)}" class="${n===selectedPerson?'active':''}">${esc(n)}${!isActiveEmployee(n) ? ' <span class="badge badge-left" style="font-size:9px;">Left</span>' : ''}</button>`
   ).join('') || '<div class="muted" style="padding:10px;">No matches</div>';
   document.querySelectorAll('#people-list button').forEach(btn => {
     btn.addEventListener('click', () => selectPerson(btn.dataset.name));
@@ -738,6 +833,7 @@ function renderPeopleList(filter) {
 function selectPerson(name) {
   selectedPerson = name;
   addFormOpen = false;
+  personTypeFilter = '';
   renderPeopleList(document.getElementById('people-search').value);
   renderPeopleDetail(name);
 }
@@ -750,31 +846,38 @@ function renderPeopleDetail(name) {
     return 0;
   });
   const mdmRows = MDM.filter(r => (r.name||'').toLowerCase() === name.toLowerCase());
-  if (!rows.length) {
-    document.getElementById('people-detail').innerHTML = '<div class="empty-hint">No records found for this person.</div>';
-    return;
-  }
-  const manager = rows[0].manager;
+  const manager = employeeManager(name);
   const certs = rows.filter(r => (r.certificate||'').toLowerCase()==='yes').length;
   const ratings = rows.map(r=>r.rating).filter(r=>typeof r==='number');
   const avgRating = ratings.length ? (ratings.reduce((a,b)=>a+b,0)/ratings.length).toFixed(1) : '&mdash;';
+  const active = isActiveEmployee(name);
+  const displayRows = personTypeFilter ? rows.filter(r => (r.type||'') === personTypeFilter) : rows;
+  const personTypes = uniqueSorted(rows.map(r=>r.type));
 
   let html = `<div class="detail-head">
     <div>
-      <div class="dname">${esc(name)} <span class="badge ${STATUS_BADGE_CLASS[employeeStatus(name)]}" style="font-size:11px;vertical-align:middle;">${STATUS_LABEL[employeeStatus(name)]}</span></div>
+      <div class="dname">${esc(name)} <span class="badge ${STATUS_BADGE_CLASS[employeeStatus(name)]}" style="font-size:11px;vertical-align:middle;">${STATUS_LABEL[employeeStatus(name)]}</span>${!active ? ' <span class="badge badge-left" style="font-size:11px;vertical-align:middle;">Left company</span>' : ''}</div>
       <div class="dmgr">Reports to ${esc(manager||'&mdash;')}</div>
     </div>
-    <div class="detail-stats">
-      <div><b>${rows.length}</b><span>Trainings</span></div>
-      <div><b>${certs}</b><span>Certified</span></div>
-      <div><b>${avgRating}</b><span>Avg rating</span></div>
-      <div><b>${mdmRows.length}</b><span>MDM certs</span></div>
+    <div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap;">
+      <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;cursor:pointer;">
+        <span class="muted">${active ? 'Active' : 'Left company'}</span>
+        <span class="switch"><input type="checkbox" id="emp-active-toggle" ${active?'checked':''}><span class="slider"></span></span>
+      </label>
+      <div class="detail-stats">
+        <div><b>${rows.length}</b><span>Trainings</span></div>
+        <div><b>${certs}</b><span>Certified</span></div>
+        <div><b>${avgRating}</b><span>Avg rating</span></div>
+        <div><b>${mdmRows.length}</b><span>MDM certs</span></div>
+      </div>
     </div>
   </div>`;
 
   html += `<div class="section-sub-row">
-    <span class="section-sub">Trainings & certificates (${rows.length}) &middot; most recent first</span>
-    <span style="display:flex;gap:8px;">
+    <span class="section-sub">Trainings & certificates (${displayRows.length}${personTypeFilter ? ' of '+rows.length : ''}) &middot; most recent first</span>
+    <span style="display:flex;gap:8px;flex-wrap:wrap;">
+      <select id="person-type-filter"><option value="">All types</option>${personTypes.map(t=>`<option value="${esc(t)}" ${t===personTypeFilter?'selected':''}>${esc(t)}</option>`).join('')}</select>
+      <a class="btn" href="https://drive.google.com/drive/folders/1uj-nR7pUU0o5NwnDOnNhAh3Z7925qvJd?usp=share_link" target="_blank" rel="noopener noreferrer">Upload certificate &#8599;</a>
       <button class="btn" id="export-person">Export CSV</button>
       <button class="btn btn-primary" id="toggle-add-form">${addFormOpen ? 'Cancel' : '+ Add training'}</button>
     </span>
@@ -796,22 +899,26 @@ function renderPeopleDetail(name) {
     </div>
   </div>`;
 
-  html += `<div class="table-scroll" style="max-height:400px;"><table><thead><tr>
-    <th>Training / certificate</th><th>Type</th><th>Completed</th><th>Cert?</th><th>Cert expiry</th><th>Rating</th><th>Remarks</th><th></th>
-  </tr></thead><tbody>`;
-  rows.forEach(r => {
-    html += `<tr>
-      <td>${esc(r.training)}${r.__added?' <span class="badge badge-added">Added</span>':''}</td>
-      <td>${esc(r.type)||'<span class="muted">&mdash;</span>'}</td>
-      <td>${dateInput(r, 'completionDate')}</td>
-      <td>${certBadge(r.certificate)}</td>
-      <td>${dateInput(r, 'certExpiry')}</td>
-      <td>${r.rating ?? '<span class="muted">&mdash;</span>'}</td>
-      <td>${esc(r.remarks)||'<span class="muted">&mdash;</span>'}</td>
-      <td>${r.__added ? `<span class="remove-link" data-key="${r.__key}">Remove</span>` : ''}</td>
-    </tr>`;
-  });
-  html += `</tbody></table></div>`;
+  if (!displayRows.length) {
+    html += `<div class="empty-hint">${rows.length ? 'No trainings match this type filter.' : 'No trainings logged yet for this person. Use "+ Add training" to log their first one.'}</div>`;
+  } else {
+    html += `<div class="table-scroll" style="max-height:400px;"><table><thead><tr>
+      <th>Training / certificate</th><th>Type</th><th>Completed</th><th>Cert?</th><th>Cert expiry</th><th>Rating</th><th>Remarks</th><th></th>
+    </tr></thead><tbody>`;
+    displayRows.forEach(r => {
+      html += `<tr>
+        <td>${esc(r.training)}${r.__added?' <span class="badge badge-added">Added</span>':''}</td>
+        <td>${esc(r.type)||'<span class="muted">&mdash;</span>'}</td>
+        <td>${dateInput(r, 'completionDate')}</td>
+        <td>${certBadge(r.certificate)}</td>
+        <td>${dateInput(r, 'certExpiry')}</td>
+        <td>${r.rating ?? '<span class="muted">&mdash;</span>'}</td>
+        <td>${esc(r.remarks)||'<span class="muted">&mdash;</span>'}</td>
+        <td>${r.__added ? `<span class="remove-link" data-key="${r.__key}">Remove</span>` : ''}</td>
+      </tr>`;
+    });
+    html += `</tbody></table></div>`;
+  }
 
   if (mdmRows.length) {
     html += `<div class="section-sub-row"><span class="section-sub">MDM certifications (${mdmRows.length})</span></div>`;
@@ -831,6 +938,18 @@ function renderPeopleDetail(name) {
 
   document.getElementById('people-detail').innerHTML = html;
 
+  document.getElementById('emp-active-toggle').addEventListener('change', e => {
+    setEmployeeActive(name, e.target.checked);
+    renderPeopleDetail(name);
+    renderOverview();
+    renderPeopleList(document.getElementById('people-search').value);
+    const empPanel = document.getElementById('panel-employees');
+    if (empPanel) renderEmployees();
+  });
+  document.getElementById('person-type-filter').addEventListener('change', e => {
+    personTypeFilter = e.target.value;
+    renderPeopleDetail(name);
+  });
   document.getElementById('toggle-add-form').addEventListener('click', () => {
     addFormOpen = !addFormOpen;
     renderPeopleDetail(name);
@@ -892,7 +1011,10 @@ function filteredLogRows() {
   const person = personSel.value;
   const type = typeSel.value;
   const cert = document.getElementById('log-cert').value;
+  const empStatus = document.getElementById('log-emp-status').value;
   let rows = MAIN.filter(r => {
+    if (empStatus === 'active' && !isActiveEmployee(r.name)) return false;
+    if (empStatus === 'left' && isActiveEmployee(r.name)) return false;
     if (person && r.name !== person) return false;
     if (type && r.type !== type) return false;
     if (cert && (r.certificate||'') !== cert) return false;
@@ -917,7 +1039,9 @@ function filteredLogRows() {
   return rows;
 }
 function renderLog() {
-  personSel.innerHTML = '<option value="">All people</option>' + uniqueSorted(MAIN.map(r=>r.name)).map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+  const curPerson = personSel.value;
+  personSel.innerHTML = '<option value="">All people</option>' + allEmployeeNames().map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+  if (curPerson) personSel.value = curPerson;
   typeSel.innerHTML = '<option value="">All types</option>' + uniqueSorted(MAIN.map(r=>r.type)).map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('');
   const rows = filteredLogRows();
   document.getElementById('log-count').textContent = `${rows.length} of ${MAIN.length} records`;
@@ -936,7 +1060,7 @@ function renderLog() {
   </tr>`).join('');
 }
 document.getElementById('log-search').addEventListener('input', renderLog);
-[personSel, typeSel, document.getElementById('log-cert')].forEach(el => el.addEventListener('change', renderLog));
+[personSel, typeSel, document.getElementById('log-cert'), document.getElementById('log-emp-status')].forEach(el => el.addEventListener('change', renderLog));
 document.querySelectorAll('#log-table th[data-key]').forEach(th => {
   th.addEventListener('click', () => {
     const key = th.dataset.key;
@@ -1017,7 +1141,10 @@ let mdmSort = { key: 'name', dir: 1 };
 function filteredMdmRows() {
   const q = document.getElementById('mdm-search').value.trim().toLowerCase();
   const status = mdmStatusSel.value;
+  const empStatus = document.getElementById('mdm-emp-status').value;
   let rows = MDM.filter(r => {
+    if (empStatus === 'active' && !isActiveEmployee(r.name)) return false;
+    if (empStatus === 'left' && isActiveEmployee(r.name)) return false;
     if (status && (r.status||'') !== status) return false;
     if (q) {
       const hay = [r.name, r.certificate].join(' ').toLowerCase();
@@ -1052,6 +1179,7 @@ function renderMdm() {
 }
 document.getElementById('mdm-search').addEventListener('input', renderMdm);
 mdmStatusSel.addEventListener('change', renderMdm);
+document.getElementById('mdm-emp-status').addEventListener('change', renderMdm);
 document.querySelectorAll('#mdm-table th[data-key]').forEach(th => {
   th.addEventListener('click', () => {
     const key = th.dataset.key;
@@ -1060,6 +1188,79 @@ document.querySelectorAll('#mdm-table th[data-key]').forEach(th => {
     th.classList.add(mdmSort.dir === 1 ? 'sorted' : 'sorted-asc');
     renderMdm();
   });
+});
+
+// ---------- Employees tab ----------
+function renderEmployees() {
+  const q = (document.getElementById('emp-search').value||'').trim().toLowerCase();
+  const names = allEmployeeNames().filter(n => !q || n.toLowerCase().includes(q));
+  const active = [], left = [];
+  names.forEach(n => (isActiveEmployee(n) ? active : left).push(n));
+  function rowHtml(name) {
+    const rs = MAIN.filter(r => r.name === name);
+    const certs = rs.filter(r => (r.certificate||'').toLowerCase()==='yes').length;
+    const mgr = employeeManager(name);
+    return `<div class="emp-row">
+      <div>
+        <div class="emp-name">${esc(name)}</div>
+        <div class="emp-mgr">Reports to ${esc(mgr||'&mdash;')}</div>
+      </div>
+      <div class="emp-stats"><span>${rs.length} trainings</span><span>${certs} certified</span></div>
+      <div class="emp-actions">
+        <span class="remove-link view-emp" data-name="${esc(name)}" style="color:var(--accent);">View record</span>
+        <label class="switch" title="${isActiveEmployee(name)?'Active':'Left company'}">
+          <input type="checkbox" class="emp-toggle" data-name="${esc(name)}" ${isActiveEmployee(name)?'checked':''}>
+          <span class="slider"></span>
+        </label>
+      </div>
+    </div>`;
+  }
+  let html = '';
+  html += `<div class="emp-section-title">Active employees (${active.length})</div>`;
+  html += active.length ? active.sort((a,b)=>a.localeCompare(b)).map(rowHtml).join('') : '<div class="empty-hint" style="padding:16px;">No active employees match.</div>';
+  html += `<div class="emp-section-title">Former employees (${left.length}) &mdash; toggled off, full history preserved below</div>`;
+  html += left.length ? left.sort((a,b)=>a.localeCompare(b)).map(rowHtml).join('') : '<div class="empty-hint" style="padding:16px;">No former employees on file.</div>';
+  document.getElementById('emp-list').innerHTML = html;
+  document.querySelectorAll('.emp-toggle').forEach(cb => {
+    cb.addEventListener('change', e => {
+      setEmployeeActive(e.target.dataset.name, e.target.checked);
+      renderEmployees();
+      renderOverview();
+      renderPeopleList(document.getElementById('people-search').value);
+      if (selectedPerson === e.target.dataset.name) renderPeopleDetail(selectedPerson);
+    });
+  });
+  document.querySelectorAll('.view-emp').forEach(el => {
+    el.addEventListener('click', () => {
+      document.querySelector('nav.tabs button[data-tab="people"]').click();
+      selectPerson(el.dataset.name);
+    });
+  });
+}
+document.getElementById('emp-search').addEventListener('input', renderEmployees);
+document.getElementById('toggle-emp-form').addEventListener('click', () => {
+  const form = document.getElementById('emp-form');
+  const open = !form.classList.contains('open');
+  form.classList.toggle('open', open);
+  document.getElementById('toggle-emp-form').textContent = open ? 'Cancel' : '+ Add employee';
+});
+document.getElementById('emp-cancel').addEventListener('click', () => {
+  document.getElementById('emp-form').classList.remove('open');
+  document.getElementById('toggle-emp-form').textContent = '+ Add employee';
+});
+document.getElementById('emp-save').addEventListener('click', () => {
+  const nameInput = document.getElementById('new-emp-name');
+  const name = nameInput.value.trim();
+  if (!name) { nameInput.focus(); return; }
+  const manager = document.getElementById('new-emp-manager').value.trim();
+  addEmployee(name, manager);
+  nameInput.value = '';
+  document.getElementById('new-emp-manager').value = '';
+  document.getElementById('emp-form').classList.remove('open');
+  document.getElementById('toggle-emp-form').textContent = '+ Add employee';
+  renderEmployees();
+  renderOverview();
+  renderPeopleList(document.getElementById('people-search').value);
 });
 
 // ---------- Monthly Activity tab ----------
@@ -1116,6 +1317,7 @@ renderPeopleList('');
 renderLog();
 renderMdm();
 renderMonthly();
+renderEmployees();
 refreshCertFormOptions();
 </script>
 </body>
