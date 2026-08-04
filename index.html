@@ -756,7 +756,7 @@ function renderCharts() {
   if (monthChart) monthChart.destroy();
   monthChart = new Chart(document.getElementById('monthChart'), {
     type: 'bar',
-    data: { labels: months, datasets: [{ label: 'Certifications completed', data: counts, backgroundColor: '#5b5fef', borderRadius: 3, maxBarThickness: 22 }] },
+    data: { labels: months, datasets: [{ label: 'Certifications completed', data: counts, backgroundColor: '#0777db', borderRadius: 3, maxBarThickness: 22 }] },
     options: {
       responsive: true, maintainAspectRatio: false,
       plugins: { legend: { display: false } },
