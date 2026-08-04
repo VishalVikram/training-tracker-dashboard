@@ -208,9 +208,35 @@
   .emp-actions { display: flex; align-items: center; gap: 14px; }
   .emp-section-title { font-size: 12.5px; font-weight: 650; color: var(--muted); text-transform: uppercase; letter-spacing: .03em; margin: 18px 0 8px; }
   .emp-section-title:first-child { margin-top: 0; }
+  .gate-overlay { position: fixed; inset: 0; background: rgba(28,31,46,0.55); display: none; align-items: center; justify-content: center; z-index: 1000; padding: 16px; }
+  .gate-overlay.show { display: flex; }
+  .gate-box { background: #fff; border-radius: 14px; padding: 28px 30px; width: 320px; max-width: 100%; box-shadow: 0 12px 40px rgba(20,20,50,0.25); }
+  .gate-box h3 { margin: 0 0 4px; font-size: 16px; }
+  .gate-box p { margin: 0 0 16px; font-size: 12.5px; color: var(--muted); }
+  .gate-box label { display: block; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .02em; margin: 12px 0 4px; }
+  .gate-box input { width: 100%; padding: 8px 10px; border: 1px solid var(--border); border-radius: 7px; font-size: 13.5px; }
+  .gate-error { color: var(--red); font-size: 12px; margin-top: 10px; display: none; }
+  .gate-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
+  .lock-link { font-size: 11.5px; color: var(--muted); cursor: pointer; text-decoration: underline; }
 </style>
 </head>
 <body>
+
+<div class="gate-overlay" id="emp-gate-overlay">
+  <div class="gate-box">
+    <h3>Employees tab is restricted</h3>
+    <p>Sign in to view or manage the employee roster.</p>
+    <label>Username</label>
+    <input type="text" id="gate-username" autocomplete="username">
+    <label>Password</label>
+    <input type="password" id="gate-password" autocomplete="current-password">
+    <div class="gate-error" id="gate-error">Incorrect username or password.</div>
+    <div class="gate-actions">
+      <button class="btn" id="gate-cancel">Cancel</button>
+      <button class="btn btn-primary" id="gate-submit">Unlock</button>
+    </div>
+  </div>
+</div>
 
 <header>
   <div class="wrap header-row" style="padding:0;">
@@ -385,7 +411,10 @@
     <div class="card">
       <div class="section-sub-row">
         <span class="section-sub">Employee roster &mdash; toggle off anyone who has left; their history stays on record</span>
-        <button class="btn btn-primary" id="toggle-emp-form">+ Add employee</button>
+        <span style="display:flex;align-items:center;gap:14px;">
+          <span class="lock-link" id="emp-lock-link">Lock this tab</span>
+          <button class="btn btn-primary" id="toggle-emp-form">+ Add employee</button>
+        </span>
       </div>
       <div class="add-form" id="emp-form">
         <div class="add-grid">
@@ -532,13 +561,59 @@ function activeMainRows() { return MAIN.filter(r => isActiveEmployee(r.name)); }
 function activeMdmRows() { return MDM.filter(r => isActiveEmployee(r.name)); }
 
 // ---------- Tabs ----------
+function activateTab(btn) {
+  document.querySelectorAll('nav.tabs button').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  btn.classList.add('active');
+  document.getElementById('panel-' + btn.dataset.tab).classList.add('active');
+}
 document.querySelectorAll('nav.tabs button').forEach(btn => {
   btn.addEventListener('click', () => {
-    document.querySelectorAll('nav.tabs button').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
-    btn.classList.add('active');
-    document.getElementById('panel-' + btn.dataset.tab).classList.add('active');
+    if (btn.dataset.tab === 'employees' && !empUnlocked) {
+      pendingTab = btn;
+      showEmpGate();
+      return;
+    }
+    activateTab(btn);
   });
+});
+
+// ---------- Employees tab access gate ----------
+const EMP_GATE_USER = 'admin';
+const EMP_GATE_PASS = 'Pingahl@123';
+let empUnlocked = sessionStorage.getItem('emp_unlocked') === '1';
+let pendingTab = null;
+function showEmpGate() {
+  document.getElementById('gate-error').style.display = 'none';
+  document.getElementById('emp-gate-overlay').classList.add('show');
+  document.getElementById('gate-username').focus();
+}
+function hideEmpGate() {
+  document.getElementById('emp-gate-overlay').classList.remove('show');
+}
+function attemptUnlock() {
+  const u = document.getElementById('gate-username').value.trim();
+  const p = document.getElementById('gate-password').value;
+  if (u === EMP_GATE_USER && p === EMP_GATE_PASS) {
+    empUnlocked = true;
+    sessionStorage.setItem('emp_unlocked', '1');
+    document.getElementById('gate-username').value = '';
+    document.getElementById('gate-password').value = '';
+    hideEmpGate();
+    if (pendingTab) { activateTab(pendingTab); pendingTab = null; }
+  } else {
+    document.getElementById('gate-error').style.display = 'block';
+  }
+}
+document.getElementById('gate-submit').addEventListener('click', attemptUnlock);
+document.getElementById('gate-cancel').addEventListener('click', () => { hideEmpGate(); pendingTab = null; });
+['gate-username','gate-password'].forEach(id => {
+  document.getElementById(id).addEventListener('keydown', e => { if (e.key === 'Enter') attemptUnlock(); });
+});
+document.getElementById('emp-lock-link').addEventListener('click', () => {
+  empUnlocked = false;
+  sessionStorage.removeItem('emp_unlocked');
+  activateTab(document.querySelector('nav.tabs button[data-tab="overview"]'));
 });
 
 // ---------- Helpers ----------
@@ -770,7 +845,7 @@ function renderOverview() {
     const avgRating = p.ratings.length ? (p.ratings.reduce((a,b)=>a+b,0)/p.ratings.length).toFixed(1) : '&mdash;';
     return `<div class="person-card" data-name="${esc(name)}">
       <div class="pname">${esc(name)} <span class="badge ${STATUS_BADGE_CLASS[employeeStatus(name)]}" style="font-size:10px;">${STATUS_LABEL[employeeStatus(name)]}</span></div>
-      <div class="pmgr">Reports to ${esc(p.manager||'&mdash;')}</div>
+      <div class="pmgr">Reports to ${p.manager ? esc(p.manager) : '&mdash;'}</div>
       <div class="person-stats">
         <div><b>${p.trainings}</b><span class="muted">Trainings</span></div>
         <div><b>${p.certs}</b><span class="muted">Certified</span></div>
@@ -857,7 +932,7 @@ function renderPeopleDetail(name) {
   let html = `<div class="detail-head">
     <div>
       <div class="dname">${esc(name)} <span class="badge ${STATUS_BADGE_CLASS[employeeStatus(name)]}" style="font-size:11px;vertical-align:middle;">${STATUS_LABEL[employeeStatus(name)]}</span>${!active ? ' <span class="badge badge-left" style="font-size:11px;vertical-align:middle;">Left company</span>' : ''}</div>
-      <div class="dmgr">Reports to ${esc(manager||'&mdash;')}</div>
+      <div class="dmgr">Reports to ${manager ? esc(manager) : '&mdash;'}</div>
     </div>
     <div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap;">
       <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;cursor:pointer;">
@@ -1203,7 +1278,7 @@ function renderEmployees() {
     return `<div class="emp-row">
       <div>
         <div class="emp-name">${esc(name)}</div>
-        <div class="emp-mgr">Reports to ${esc(mgr||'&mdash;')}</div>
+        <div class="emp-mgr">Reports to ${mgr ? esc(mgr) : '&mdash;'}</div>
       </div>
       <div class="emp-stats"><span>${rs.length} trainings</span><span>${certs} certified</span></div>
       <div class="emp-actions">
