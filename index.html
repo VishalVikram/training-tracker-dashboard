@@ -13,8 +13,8 @@
     --ink: #1c1f2e;
     --muted: #6b7086;
     --border: #e4e6ef;
-    --accent: #5b5fef;
-    --accent-light: #eceefd;
+    --accent: #0777db;
+    --accent-light: #e7f1fc;
     --green: #1e9e6a;
     --green-bg: #e6f7ef;
     --amber: #b8860b;
@@ -34,7 +34,7 @@
   }
   header {
     padding: 24px 32px 32px;
-    background: linear-gradient(135deg, #5b5fef 0%, #7c6ff0 100%);
+    background: linear-gradient(135deg, #045d95 0%, #0777db 100%);
     color: white;
   }
   header .header-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
@@ -966,6 +966,14 @@ function renderPeopleDetail(name) {
       <div><label>Certificate?</label><select id="new-cert"><option value="">&mdash;</option><option value="Yes">Yes</option><option value="No">No</option></select></div>
       <div><label>Cert expiry</label><input type="date" id="new-expiry"></div>
       <div><label>Rating (1&ndash;5)</label><input type="number" id="new-rating" min="1" max="5" step="1"></div>
+      <div id="new-cert-upload-wrap" style="grid-column: 1 / -1; display:none;">
+        <label>Upload certificate*</label>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+          <a class="btn" href="https://drive.google.com/drive/folders/1uj-nR7pUU0o5NwnDOnNhAh3Z7925qvJd?usp=share_link" target="_blank" rel="noopener noreferrer">Upload certificate &#8599;</a>
+          <input type="text" id="new-cert-file" placeholder="File name as uploaded (e.g. gaurav_snowflake_cert.pdf)" style="flex:1; min-width:220px;">
+        </div>
+        <span class="muted" style="font-size:12px;">Upload the file to the shared folder above, then enter the file name here so it can be located.</span>
+      </div>
       <div style="grid-column: 1 / -1;"><label>Remarks</label><input type="text" id="new-remarks" placeholder="Manager remarks (optional)"></div>
     </div>
     <div class="add-actions">
@@ -1046,17 +1054,29 @@ function renderPeopleDetail(name) {
   });
   const cancelBtn = document.getElementById('cancel-add');
   if (cancelBtn) cancelBtn.addEventListener('click', () => { addFormOpen = false; renderPeopleDetail(name); });
+  const certSel = document.getElementById('new-cert');
+  const certUploadWrap = document.getElementById('new-cert-upload-wrap');
+  const certFileInput = document.getElementById('new-cert-file');
+  if (certSel) certSel.addEventListener('change', () => {
+    const isYes = certSel.value === 'Yes';
+    certUploadWrap.style.display = isYes ? 'block' : 'none';
+    if (!isYes) certFileInput.value = '';
+  });
   const saveBtn = document.getElementById('save-add');
   if (saveBtn) saveBtn.addEventListener('click', () => {
     const training = document.getElementById('new-training').value.trim();
     if (!training) { document.getElementById('new-training').focus(); return; }
+    const certValue = document.getElementById('new-cert').value || null;
+    const certFile = document.getElementById('new-cert-file').value.trim();
+    if (certValue === 'Yes' && !certFile) { document.getElementById('new-cert-file').focus(); return; }
     addMainRecord({
       name: name,
       manager: manager,
       training: training,
       type: document.getElementById('new-type').value.trim() || null,
       completionDate: document.getElementById('new-date').value || null,
-      certificate: document.getElementById('new-cert').value || null,
+      certificate: certValue,
+      certFile: certValue === 'Yes' ? certFile : null,
       certExpiry: document.getElementById('new-expiry').value || null,
       rating: document.getElementById('new-rating').value ? Number(document.getElementById('new-rating').value) : null,
       remarks: document.getElementById('new-remarks').value.trim() || null,
