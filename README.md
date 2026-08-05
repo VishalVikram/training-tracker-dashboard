@@ -1,4 +1,4 @@
-# Deploying the Training Tracker Dashboard to Vercel
+# Deploying the Training Tracker Dashboard to Vercel 
 
 This folder contains a single self-contained `index.html` — no build step, no
 dependencies, no server required. Everything (data, styling, and logic) is
