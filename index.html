@@ -168,6 +168,7 @@
   .type-detail-item .who:hover { color: var(--accent); }
   .type-detail-item .tr { color: var(--muted); flex: 1; margin: 0 10px; }
   .remove-link { font-size: 11px; color: var(--red); cursor: pointer; text-decoration: underline; margin-left: 8px; }
+  .remove-emp { font-size: 11px; color: var(--red); cursor: pointer; text-decoration: underline; margin-left: 10px; }
   .charts-row { display: grid; grid-template-columns: 1.5fr 1fr; gap: 16px; margin-bottom: 16px; }
   .chart-card h3 { margin: 0 0 12px; font-size: 14px; }
   .alert-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
@@ -452,7 +453,7 @@ document.getElementById('gen-date').textContent = new Date().toLocaleDateString(
 
 // ---------- Persisted edits / additions (localStorage) ----------
 const STORE_KEY = 'ttracker_overrides_v2';
-const OVR_DEFAULTS = {main:{}, mdm:{}, addedMain:{}, addedMdm:{}, empStatus:{}, addedEmployees:{}, managerOverride:{}, updatedAt: 0};
+const OVR_DEFAULTS = {main:{}, mdm:{}, addedMain:{}, addedMdm:{}, empStatus:{}, addedEmployees:{}, managerOverride:{}, deletedEmployees:{}, updatedAt: 0};
 function loadOverrides() {
   try { return Object.assign({}, OVR_DEFAULTS, JSON.parse(localStorage.getItem(STORE_KEY))||{}); }
   catch(e) { return Object.assign({}, OVR_DEFAULTS); }
@@ -489,6 +490,12 @@ function applyOverrides() {
   Object.entries(OVR.addedEmployees||{}).forEach(([id,fields]) => {
     ADDED_EMPLOYEES.push(Object.assign({}, fields, { __key: id }));
   });
+  const deletedNames = OVR.deletedEmployees || {};
+  if (Object.keys(deletedNames).length) {
+    MAIN = MAIN.filter(r => !deletedNames[r.name]);
+    MDM = MDM.filter(r => !deletedNames[r.name]);
+    ADDED_EMPLOYEES = ADDED_EMPLOYEES.filter(e => !deletedNames[e.name]);
+  }
 }
 applyOverrides();
 
@@ -577,6 +584,85 @@ function addEmployee(name, manager) {
   persist();
   ADDED_EMPLOYEES.push({ name, manager: manager || null, __key: id });
   return name;
+}
+// Rename an employee everywhere their name appears: their own training/cert
+// rows, anyone who lists them as manager, and any saved manager/active-status
+// overrides keyed by their old name. Returns true on success, 'duplicate' if
+// another employee already has that name, false on bad input.
+function renameEmployee(oldName, newName) {
+  oldName = (oldName||'').trim();
+  newName = (newName||'').trim();
+  if (!oldName || !newName) return false;
+  if (oldName === newName) return true;
+  const clash = allEmployeeNames().find(n => n.toLowerCase() === newName.toLowerCase() && n.toLowerCase() !== oldName.toLowerCase());
+  if (clash) return 'duplicate';
+
+  function renameField(store, key, field) {
+    OVR[store] = OVR[store] || {};
+    OVR[store][key] = OVR[store][key] || {};
+    OVR[store][key][field] = newName;
+  }
+  MAIN.forEach(r => {
+    if (r.name === oldName) renameField(r.__store, r.__key, 'name');
+    if (r.manager === oldName) renameField(r.__store, r.__key, 'manager');
+  });
+  MDM.forEach(r => {
+    if (r.name === oldName) renameField(r.__store, r.__key, 'name');
+  });
+  Object.values(OVR.addedEmployees||{}).forEach(fields => {
+    if (fields.name === oldName) fields.name = newName;
+    if (fields.manager === oldName) fields.manager = newName;
+  });
+  if (OVR.managerOverride) {
+    if (OVR.managerOverride[oldName] !== undefined) {
+      OVR.managerOverride[newName] = OVR.managerOverride[oldName];
+      delete OVR.managerOverride[oldName];
+    }
+    Object.keys(OVR.managerOverride).forEach(k => {
+      if (OVR.managerOverride[k] === oldName) OVR.managerOverride[k] = newName;
+    });
+  }
+  if (OVR.empStatus && OVR.empStatus[oldName] !== undefined) {
+    OVR.empStatus[newName] = OVR.empStatus[oldName];
+    delete OVR.empStatus[oldName];
+  }
+  if (OVR.deletedEmployees && OVR.deletedEmployees[oldName]) {
+    OVR.deletedEmployees[newName] = true;
+    delete OVR.deletedEmployees[oldName];
+  }
+  persist();
+  applyOverrides();
+  return true;
+}
+// Remove an employee completely - hides them and every training/cert record
+// under their name from the whole app. Nothing is deleted from the original
+// spreadsheet data, so this stays an override rather than permanent loss.
+function deleteEmployeeCompletely(name) {
+  name = (name||'').trim();
+  if (!name) return;
+  OVR.deletedEmployees = OVR.deletedEmployees || {};
+  OVR.deletedEmployees[name] = true;
+  if (OVR.managerOverride) delete OVR.managerOverride[name];
+  if (OVR.empStatus) delete OVR.empStatus[name];
+  // Anyone who reported to the deleted person shouldn't keep showing a
+  // dangling "Reports to <deleted name>" - clear their manager field too.
+  MAIN.forEach(r => {
+    if (r.manager === name) {
+      OVR[r.__store] = OVR[r.__store] || {};
+      OVR[r.__store][r.__key] = OVR[r.__store][r.__key] || {};
+      OVR[r.__store][r.__key].manager = null;
+    }
+  });
+  Object.values(OVR.addedEmployees||{}).forEach(fields => {
+    if (fields.manager === name) fields.manager = null;
+  });
+  if (OVR.managerOverride) {
+    Object.keys(OVR.managerOverride).forEach(k => {
+      if (OVR.managerOverride[k] === name) delete OVR.managerOverride[k];
+    });
+  }
+  persist();
+  applyOverrides();
 }
 function activeMainRows() { return MAIN.filter(r => isActiveEmployee(r.name)); }
 function activeMdmRows() { return MDM.filter(r => isActiveEmployee(r.name)); }
@@ -1318,7 +1404,10 @@ function renderEmployees() {
     const mgr = employeeManager(name);
     return `<div class="emp-row">
       <div>
-        <div class="emp-name">${esc(name)}</div>
+        <div class="emp-name-row" data-name="${esc(name)}">
+          <span class="emp-name-display emp-name">${esc(name)}</span>
+          <span class="emp-name-edit" data-name="${esc(name)}" style="margin-left:8px; color:var(--accent); cursor:pointer; font-size:12px;">Edit</span>
+        </div>
         <div class="emp-mgr-row" data-name="${esc(name)}">
           <span class="emp-mgr-display">Reports to ${mgr ? esc(mgr) : '&mdash;'}</span>
           <span class="emp-mgr-edit" data-name="${esc(name)}" style="margin-left:8px; color:var(--accent); cursor:pointer; font-size:12px;">Edit</span>
@@ -1331,6 +1420,7 @@ function renderEmployees() {
           <input type="checkbox" class="emp-toggle" data-name="${esc(name)}" ${isActiveEmployee(name)?'checked':''}>
           <span class="slider"></span>
         </label>
+        <span class="remove-emp" data-name="${esc(name)}">Remove</span>
       </div>
     </div>`;
   }
@@ -1363,6 +1453,49 @@ function renderEmployees() {
         if (e.key === 'Escape') renderEmployees();
       });
       row.querySelector('.emp-mgr-cancel').addEventListener('click', () => renderEmployees());
+    });
+  });
+  document.querySelectorAll('.emp-name-edit').forEach(el => {
+    el.addEventListener('click', () => {
+      const row = el.closest('.emp-name-row');
+      const name = el.dataset.name;
+      row.innerHTML = `
+        <input type="text" class="emp-name-input" value="${esc(name)}" placeholder="Full name" style="font-size:13px; padding:4px 8px; border:1px solid var(--border); border-radius:6px; width:200px;">
+        <span class="emp-name-save" data-name="${esc(name)}" style="margin-left:6px; color:var(--accent); cursor:pointer; font-size:12px;">Save</span>
+        <span class="emp-name-cancel" style="margin-left:6px; color:var(--muted); cursor:pointer; font-size:12px;">Cancel</span>`;
+      const input = row.querySelector('.emp-name-input');
+      input.focus();
+      input.select();
+      row.querySelector('.emp-name-save').addEventListener('click', () => {
+        const newName = input.value.trim();
+        if (!newName) { input.focus(); return; }
+        if (newName === name) { renderEmployees(); return; }
+        const result = renameEmployee(name, newName);
+        if (result === 'duplicate') {
+          alert(`"${newName}" is already an employee name. Choose a different name, or edit that existing record instead.`);
+          return;
+        }
+        if (selectedPerson === name) selectedPerson = newName;
+        renderAll();
+      });
+      input.addEventListener('keydown', e => {
+        if (e.key === 'Enter') row.querySelector('.emp-name-save').click();
+        if (e.key === 'Escape') renderEmployees();
+      });
+      row.querySelector('.emp-name-cancel').addEventListener('click', () => renderEmployees());
+    });
+  });
+  document.querySelectorAll('.remove-emp').forEach(el => {
+    el.addEventListener('click', () => {
+      const name = el.dataset.name;
+      const recordCount = MAIN.filter(r => r.name === name).length + MDM.filter(r => r.name === name).length;
+      const warning = recordCount > 0
+        ? `Remove ${name} completely? Their ${recordCount} training/certification record(s) will also disappear from every tab. This can only be undone by an admin re-adding them.`
+        : `Remove ${name} completely? This can only be undone by re-adding them.`;
+      if (!confirm(warning)) return;
+      deleteEmployeeCompletely(name);
+      if (selectedPerson === name) selectedPerson = null;
+      renderAll();
     });
   });
   document.querySelectorAll('.emp-toggle').forEach(cb => {
@@ -1487,6 +1620,7 @@ async function fetchRemoteState() {
 function isEditingSomething() {
   if (addFormOpen) return true;
   if (document.querySelector('.emp-mgr-input')) return true;
+  if (document.querySelector('.emp-name-input')) return true;
   const certForm = document.getElementById('cert-form');
   if (certForm && certForm.classList.contains('open')) return true;
   const empForm = document.getElementById('emp-form');
