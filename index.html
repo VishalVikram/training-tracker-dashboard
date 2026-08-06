@@ -169,6 +169,9 @@
   .type-detail-item .tr { color: var(--muted); flex: 1; margin: 0 10px; }
   .remove-link { font-size: 11px; color: var(--red); cursor: pointer; text-decoration: underline; margin-left: 8px; }
   .remove-emp { font-size: 11px; color: var(--red); cursor: pointer; text-decoration: underline; margin-left: 10px; }
+  .cert-folder-link { margin-left: 5px; text-decoration: none; }
+  .cert-name-link { color: var(--ink); text-decoration: none; border-bottom: 1px dashed var(--accent); }
+  .cert-name-link:hover { color: var(--accent); }
   .charts-row { display: grid; grid-template-columns: 1.5fr 1fr; gap: 16px; margin-bottom: 16px; }
   .chart-card h3 { margin: 0 0 12px; font-size: 14px; }
   .alert-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
@@ -453,7 +456,7 @@ document.getElementById('gen-date').textContent = new Date().toLocaleDateString(
 
 // ---------- Persisted edits / additions (localStorage) ----------
 const STORE_KEY = 'ttracker_overrides_v2';
-const OVR_DEFAULTS = {main:{}, mdm:{}, addedMain:{}, addedMdm:{}, empStatus:{}, addedEmployees:{}, managerOverride:{}, deletedEmployees:{}, updatedAt: 0};
+const OVR_DEFAULTS = {main:{}, mdm:{}, addedMain:{}, addedMdm:{}, empStatus:{}, addedEmployees:{}, managerOverride:{}, deletedEmployees:{}, certFolder:{}, updatedAt: 0};
 function loadOverrides() {
   try { return Object.assign({}, OVR_DEFAULTS, JSON.parse(localStorage.getItem(STORE_KEY))||{}); }
   catch(e) { return Object.assign({}, OVR_DEFAULTS); }
@@ -565,6 +568,31 @@ function setEmployeeManager(name, manager) {
   if (val) OVR.managerOverride[name] = val; else delete OVR.managerOverride[name];
   persist();
 }
+const CERT_DRIVE_FOLDER_ID = '1uj-nR7pUU0o5NwnDOnNhAh3Z7925qvJd';
+function certFolderUrl(name) {
+  const override = (OVR.certFolder||{})[name];
+  if (override) return override;
+  return 'https://drive.google.com/drive/search?q=' + encodeURIComponent('type:folder ' + name);
+}
+function hasCertFolderOverride(name) {
+  return !!((OVR.certFolder||{})[name]);
+}
+function setCertFolderOverride(name, url) {
+  OVR.certFolder = OVR.certFolder || {};
+  const val = (url||'').trim();
+  if (val) OVR.certFolder[name] = val; else delete OVR.certFolder[name];
+  persist();
+}
+function certFolderLink(name, label) {
+  return `<a href="${esc(certFolderUrl(name))}" target="_blank" rel="noopener noreferrer" class="cert-folder-link" title="Open ${esc(name)}'s certificate folder on Drive">${label || '📁'}</a>`;
+}
+function certLinkUrl(name, certFile) {
+  if (certFile) return 'https://drive.google.com/drive/search?q=' + encodeURIComponent(certFile);
+  return certFolderUrl(name);
+}
+function certNameLink(text, name, certFile) {
+  return `<a href="${esc(certLinkUrl(name, certFile))}" target="_blank" rel="noopener noreferrer" class="cert-name-link" title="${certFile ? 'Open this certificate file on Drive' : "Open " + esc(name) + "'s certificate folder on Drive"}">${esc(text)} &#8599;</a>`;
+}
 function isActiveEmployee(name) {
   return (OVR.empStatus||{})[name] !== 'left';
 }
@@ -630,6 +658,10 @@ function renameEmployee(oldName, newName) {
     OVR.deletedEmployees[newName] = true;
     delete OVR.deletedEmployees[oldName];
   }
+  if (OVR.certFolder && OVR.certFolder[oldName] !== undefined) {
+    OVR.certFolder[newName] = OVR.certFolder[oldName];
+    delete OVR.certFolder[oldName];
+  }
   persist();
   applyOverrides();
   return true;
@@ -644,6 +676,7 @@ function deleteEmployeeCompletely(name) {
   OVR.deletedEmployees[name] = true;
   if (OVR.managerOverride) delete OVR.managerOverride[name];
   if (OVR.empStatus) delete OVR.empStatus[name];
+  if (OVR.certFolder) delete OVR.certFolder[name];
   // Anyone who reported to the deleted person shouldn't keep showing a
   // dangling "Reports to <deleted name>" - clear their manager field too.
   MAIN.forEach(r => {
@@ -1096,8 +1129,9 @@ function renderPeopleDetail(name) {
       <th>Training / certificate</th><th>Type</th><th>Completed</th><th>Cert?</th><th>Cert expiry</th><th>Rating</th><th>Remarks</th><th></th>
     </tr></thead><tbody>`;
     displayRows.forEach(r => {
+      const trainingCell = (r.certificate||'').toLowerCase()==='yes' ? certNameLink(r.training, name, r.certFile) : esc(r.training);
       html += `<tr>
-        <td>${esc(r.training)}${r.__added?' <span class="badge badge-added">Added</span>':''}</td>
+        <td>${trainingCell}${r.__added?' <span class="badge badge-added">Added</span>':''}</td>
         <td>${esc(r.type)||'<span class="muted">&mdash;</span>'}</td>
         <td>${dateInput(r, 'completionDate')}</td>
         <td>${certBadge(r.certificate)}</td>
@@ -1117,7 +1151,7 @@ function renderPeopleDetail(name) {
     </tr></thead><tbody>`;
     mdmRows.forEach(r => {
       html += `<tr>
-        <td>${esc(r.certificate)}</td>
+        <td>${certNameLink(r.certificate, name, null)}</td>
         <td>${dateInput(r, 'month')}</td>
         <td>${dateInput(r, 'validity')}</td>
         <td>${statusBadge(r.status)}</td>
@@ -1250,7 +1284,7 @@ function renderLog() {
   document.getElementById('log-body').innerHTML = rows.map(r => `<tr>
     <td class="name-cell">${esc(r.name)}${r.__added?' <span class="badge badge-added">Added</span>':''}</td>
     <td>${esc(r.manager)||'<span class="muted">&mdash;</span>'}</td>
-    <td>${esc(r.training)}</td>
+    <td>${(r.certificate||'').toLowerCase()==='yes' ? certNameLink(r.training, r.name, r.certFile) : esc(r.training)}</td>
     <td>${esc(r.type)||'<span class="muted">&mdash;</span>'}</td>
     <td>${dateInput(r, 'completionDate')}</td>
     <td>${certBadge(r.certificate)}</td>
@@ -1373,7 +1407,7 @@ function renderMdm() {
   document.getElementById('mdm-count').textContent = `${rows.length} of ${MDM.length} records`;
   document.getElementById('mdm-body').innerHTML = rows.map(r => `<tr>
     <td class="name-cell">${esc(r.name)}${r.__added?' <span class="badge badge-added">Added</span>':''}</td>
-    <td>${esc(r.certificate)}</td>
+    <td>${certNameLink(r.certificate, r.name, null)}</td>
     <td>${dateInput(r, 'month')}</td>
     <td>${dateInput(r, 'validity')}</td>
     <td>${statusBadge(r.status)}</td>
@@ -1411,6 +1445,10 @@ function renderEmployees() {
         <div class="emp-mgr-row" data-name="${esc(name)}">
           <span class="emp-mgr-display">Reports to ${mgr ? esc(mgr) : '&mdash;'}</span>
           <span class="emp-mgr-edit" data-name="${esc(name)}" style="margin-left:8px; color:var(--accent); cursor:pointer; font-size:12px;">Edit</span>
+        </div>
+        <div class="emp-cert-row" data-name="${esc(name)}">
+          <a href="${esc(certFolderUrl(name))}" target="_blank" rel="noopener noreferrer" class="emp-cert-display" style="font-size:11.5px; color:var(--accent);">View certificate folder &#8599;</a>
+          <span class="emp-cert-edit" data-name="${esc(name)}" style="margin-left:8px; color:var(--muted); cursor:pointer; font-size:12px;">${hasCertFolderOverride(name) ? 'Edit link' : 'Set link'}</span>
         </div>
       </div>
       <div class="emp-stats"><span>${rs.length} trainings</span><span>${certs} certified</span></div>
@@ -1483,6 +1521,31 @@ function renderEmployees() {
         if (e.key === 'Escape') renderEmployees();
       });
       row.querySelector('.emp-name-cancel').addEventListener('click', () => renderEmployees());
+    });
+  });
+  document.querySelectorAll('.emp-cert-edit').forEach(el => {
+    el.addEventListener('click', () => {
+      const row = el.closest('.emp-cert-row');
+      const name = el.dataset.name;
+      const current = (OVR.certFolder||{})[name] || '';
+      row.innerHTML = `
+        <input type="text" class="emp-cert-input" value="${esc(current)}" placeholder="Paste this person's Drive folder link" style="font-size:12.5px; padding:4px 8px; border:1px solid var(--border); border-radius:6px; width:300px;">
+        <span class="emp-cert-save" data-name="${esc(name)}" style="margin-left:6px; color:var(--accent); cursor:pointer; font-size:12px;">Save</span>
+        <span class="emp-cert-cancel" style="margin-left:6px; color:var(--muted); cursor:pointer; font-size:12px;">Cancel</span>
+        ${current ? `<span class="emp-cert-clear" data-name="${esc(name)}" style="margin-left:6px; color:var(--red); cursor:pointer; font-size:12px;">Use auto-search instead</span>` : ''}`;
+      const input = row.querySelector('.emp-cert-input');
+      input.focus();
+      row.querySelector('.emp-cert-save').addEventListener('click', () => {
+        setCertFolderOverride(name, input.value);
+        renderEmployees();
+      });
+      input.addEventListener('keydown', e => {
+        if (e.key === 'Enter') row.querySelector('.emp-cert-save').click();
+        if (e.key === 'Escape') renderEmployees();
+      });
+      row.querySelector('.emp-cert-cancel').addEventListener('click', () => renderEmployees());
+      const clearBtn = row.querySelector('.emp-cert-clear');
+      if (clearBtn) clearBtn.addEventListener('click', () => { setCertFolderOverride(name, ''); renderEmployees(); });
     });
   });
   document.querySelectorAll('.remove-emp').forEach(el => {
@@ -1621,6 +1684,7 @@ function isEditingSomething() {
   if (addFormOpen) return true;
   if (document.querySelector('.emp-mgr-input')) return true;
   if (document.querySelector('.emp-name-input')) return true;
+  if (document.querySelector('.emp-cert-input')) return true;
   const certForm = document.getElementById('cert-form');
   if (certForm && certForm.classList.contains('open')) return true;
   const empForm = document.getElementById('emp-form');
